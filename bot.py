@@ -225,8 +225,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid   = update.effective_chat.id
     uname = update.effective_user.first_name or "there"
     await update.message.reply_text(
-        f"👋 Hey {uname}! The bot is online.\n\n"
-        f"📋 Your <b>Chat ID</b> is:\n"
+        f"Hey {uname}! The bot is online.\n\n"
+        f"Your <b>Chat ID</b> is:\n"
         f"<code>{cid}</code>\n\n"
         f"Copy that number and paste it into the script:\n"
         f"<code>CHAT_ID = {cid}</code>\n\n"
@@ -246,16 +246,16 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     secs_ago = int((datetime.now() - last_check_ts).total_seconds()) if last_check_ts else 0
     next_chk = max(0, CHECK_INTERVAL_SECONDS - secs_ago)
 
-    status = f"🎉 PANDA FOUND!\n🔗 {found_url}" if panda_found else "🔍 Monitoring active — nothing found yet."
+    status = f"PANDA FOUND!\n{found_url}" if panda_found else "Monitoring active — nothing found yet."
 
     await update.message.reply_text(
-        f"📊 <b>Bot Status</b>\n\n"
-        f"⏱ Uptime:         <b>{uptime}</b>\n"
-        f"🔄 Total checks:  <b>{check_count}</b>\n"
-        f"🕐 Last check:    <b>{last_chk}</b>\n"
-        f"⏳ Next check in: <b>~{next_chk}s</b>\n"
-        f"📡 Interval:      <b>{CHECK_INTERVAL_SECONDS}s</b>\n\n"
-        f"📌 <b>Status:</b>\n{status}",
+        f"<b>Bot Status</b>\n\n"
+        f"Uptime:         <b>{uptime}</b>\n"
+        f"Total checks:  <b>{check_count}</b>\n"
+        f"Last check:    <b>{last_chk}</b>\n"
+        f"Next check in: <b>~{next_chk}s</b>\n"
+        f"Interval:      <b>{CHECK_INTERVAL_SECONDS}s</b>\n\n"
+        f"<b>Status:</b>\n{status}",
         parse_mode="HTML"
     )
 
@@ -264,10 +264,10 @@ async def cmd_panda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /panda — shows the last 3 scan reports.
     """
     if not scan_reports:
-        await update.message.reply_text("📂 No reports yet — bot just started.", parse_mode="HTML")
+        await update.message.reply_text("No reports yet — bot just started.", parse_mode="HTML")
         return
 
-    text = "📋 <b>Last 3 Scan Reports</b>\n\n"
+    text = "<b>Last 3 Scan Reports</b>\n\n"
     for i, report in enumerate(reversed(scan_reports), 1):
         text += f"━━━ Report #{i} ━━━\n{report}\n\n"
 
@@ -507,36 +507,36 @@ async def on_panda_found(bot: Bot, url: str, page_html: str):
     log.info(f"PANDA FOUND at {url}")
 
     await tg_send(bot,
-        f"🚨🚨🚨 <b>FIAT PANDA REGISTRATION IS OPEN!</b> 🚨🚨🚨\n\n"
-        f"⏰ Detected at: <b>{ts}</b>\n"
-        f"🔗 URL: {url}\n\n"
-        f"{'🤖 Auto-submitting your registration now...' if AUTO_SUBMIT else '⚡ Open the link and register NOW!'}"
+        f"<b>FIAT PANDA REGISTRATION IS OPEN!</b>\n\n"
+        f"Detected at: <b>{ts}</b>\n"
+        f"URL: {url}\n\n"
+        f"{'Auto-submitting your registration now...' if AUTO_SUBMIT else 'Open the link and register NOW!'}"
     )
 
     if AUTO_SUBMIT:
         success, result = try_submit_form(url, page_html)
         await tg_send(bot,
-            f"{'✅' if success else '⚠️'} <b>Submission Result:</b>\n\n"
+            f"<b>Submission {'OK' if success else 'FAILED'}:</b>\n\n"
             f"{result}\n\n"
-            f"🔗 Direct link: {url}\n\n"
+            f"Direct link: {url}\n\n"
             f"<b>Info used:</b>\n"
-            f"👤 {YOUR_INFO['prenom']} {YOUR_INFO['nom']}\n"
-            f"📧 {YOUR_INFO['email']}\n"
-            f"📞 {YOUR_INFO['telephone']}\n"
-            f"📍 {YOUR_INFO['wilaya']} — {YOUR_INFO['ville']}"
+            f"Name:   {YOUR_INFO['prenom']} {YOUR_INFO['nom']}\n"
+            f"Email:  {YOUR_INFO['email']}\n"
+            f"Phone:  {YOUR_INFO['telephone']}\n"
+            f"Wilaya: {YOUR_INFO['wilaya']} — {YOUR_INFO['ville']}"
         )
         if not success:
-            await tg_send(bot, f"⚡ Auto-submit failed. Register manually RIGHT NOW:\n{url}")
+            await tg_send(bot, f"Auto-submit failed. Register manually RIGHT NOW:\n{url}")
     else:
         await tg_send(bot,
-            f"📋 <b>Your info ready to paste:</b>\n\n"
+            f"<b>Your info ready to paste:</b>\n\n"
             f"Family name: <code>{YOUR_INFO['nom']}</code>\n"
             f"First name:  <code>{YOUR_INFO['prenom']}</code>\n"
             f"Email:       <code>{YOUR_INFO['email']}</code>\n"
             f"Phone:       <code>{YOUR_INFO['telephone']}</code>\n"
             f"Wilaya:      <code>{YOUR_INFO['wilaya']}</code>\n"
             f"City:        <code>{YOUR_INFO['ville']}</code>\n\n"
-            f"🔗 {url}"
+            f"{url}"
         )
 
 # ──────────────────────────────────────────────────────────────
@@ -582,13 +582,13 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
                         await on_panda_found(context.bot, link, html)
                         return
         else:
-            report.append(f"✅ {domain} — nothing found")
+            report.append(f"{domain} — nothing found")
 
     if spotted:
         report.append("No form yet — but something appeared. Staying alert.")
         await tg_send(
             context.bot,
-            "👀 <b>Panda keyword appeared on fiat.dz!</b>\n\n" + "\n".join(report[1:])
+            "<b>Panda keyword appeared on fiat.dz!</b>\n\n" + "\n".join(report[1:])
         )
     else:
         report.append("All clear.")
@@ -604,11 +604,11 @@ async def post_init(application: Application):
     if CHAT_IDS:
         await tg_send(
             application.bot,
-            f"🚀 <b>Bot is online!</b>\n\n"
-            f"📡 Checking every <b>{CHECK_INTERVAL_SECONDS}s</b>\n"
-            f"🎯 Mode: <b>{'Auto-submit ON' if AUTO_SUBMIT else 'Alert only'}</b>\n"
-            f"👤 Registered for: <b>{YOUR_INFO['prenom']} {YOUR_INFO['nom']}</b>\n"
-            f"📍 <b>{YOUR_INFO['wilaya']}</b>\n\n"
+            f"<b>Bot is online!</b>\n\n"
+            f"Checking every <b>{CHECK_INTERVAL_SECONDS}s</b>\n"
+            f"Mode: <b>{'Auto-submit ON' if AUTO_SUBMIT else 'Alert only'}</b>\n"
+            f"Registered for: <b>{YOUR_INFO['prenom']} {YOUR_INFO['nom']}</b>\n"
+            f"Wilaya: <b>{YOUR_INFO['wilaya']}</b>\n\n"
             f"Commands: /check · /panda"
         )
 

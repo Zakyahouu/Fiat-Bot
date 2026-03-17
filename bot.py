@@ -31,9 +31,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 TELEGRAM_TOKEN = "8711380327:AAEukOapJXvoRFXcdHXJNFI5qyfSICxxw_E"
 
-# Leave None for now. Run the bot, send /start in Telegram,
-# then paste the number it gives you here and redeploy.
-CHAT_ID = None   # e.g. CHAT_ID = 123456789
+# Add every Chat ID that should receive alerts.
+# Each person sends /start to the bot — it replies with their ID.
+# e.g. CHAT_IDS = [123456789, 987654321]
+CHAT_IDS = [1088722186]
 
 YOUR_INFO = {
     # ── Personal Info ─────────────────────────────────────────
@@ -203,13 +204,14 @@ HEADERS = {
 # ──────────────────────────────────────────────────────────────
 
 async def tg_send(bot: Bot, text: str):
-    if not CHAT_ID:
-        log.warning("CHAT_ID not set — Telegram message skipped.")
+    if not CHAT_IDS:
+        log.warning("CHAT_IDS is empty — Telegram message skipped.")
         return
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="HTML")
-    except Exception as e:
-        log.error(f"Telegram send failed: {e}")
+    for cid in CHAT_IDS:
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+        except Exception as e:
+            log.error(f"Telegram send to {cid} failed: {e}")
 
 # ──────────────────────────────────────────────────────────────
 #   TELEGRAM COMMANDS
@@ -589,7 +591,7 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
 # ──────────────────────────────────────────────────────────────
 
 async def post_init(application: Application):
-    if CHAT_ID:
+    if CHAT_IDS:
         await tg_send(
             application.bot,
             f"🚀 <b>Bot is online!</b>\n\n"

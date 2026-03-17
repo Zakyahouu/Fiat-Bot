@@ -457,7 +457,10 @@ def check_url_for_form(url: str) -> tuple[bool, str | None]:
 
 def scan_page_for_panda(url: str) -> tuple[bool, list, str]:
     """
-    Scan a page for any mention of 'panda' and extract related links.
+    Scan a page for any mention of 'panda' in visible text and extract related links.
+    <script>/<style> blocks are stripped first to avoid false positives from static
+    JS model lists (e.g. "FIAT PANDA MY 03" in the brands object) and data-* tracking
+    attributes (e.g. data-adobe-linktype="content-range:showroom:panda" on other cars).
     Returns (keyword_found, panda_links, summary_string).
     """
     try:
@@ -465,17 +468,24 @@ def scan_page_for_panda(url: str) -> tuple[bool, list, str]:
         if r.status_code != 200:
             return False, [], f"HTTP {r.status_code}"
 
-        soup           = BeautifulSoup(r.text, "html.parser")
-        text           = r.text.lower()
-        found_keywords = [kw for kw in PANDA_KEYWORDS if kw in text]
-        panda_links    = []
+        soup = BeautifulSoup(r.text, "html.parser")
 
+        # Remove script and style tags before any text search — panda references
+        # inside JS/CSS are static site infrastructure, not registration signals.
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+
+        visible_text   = soup.get_text(" ", strip=True).lower()
+        found_keywords = [kw for kw in PANDA_KEYWORDS if kw in visible_text]
+
+        # Only collect links whose actual href URL contains "panda" —
+        # ignores data-* tracking attributes that may mention "panda" for other pages.
+        panda_links = []
         if found_keywords:
             for a in soup.find_all("a", href=True):
-                if "panda" in a.get("href", "").lower() or "panda" in a.get_text().lower():
-                    full = a["href"]
-                    if not full.startswith("http"):
-                        full = "https://www.fiat.dz" + full
+                href = a.get("href", "")
+                if "panda" in href.lower():
+                    full = href if href.startswith("http") else "https://www.fiat.dz" + href
                     panda_links.append(full)
 
         summary = f"Keywords found: {found_keywords}" if found_keywords else "Nothing found"

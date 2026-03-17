@@ -34,23 +34,23 @@ TELEGRAM_TOKEN = "8711380327:AAEukOapJXvoRFXcdHXJNFI5qyfSICxxw_E"
 # Add every Chat ID that should receive alerts.
 # Each person sends /start to the bot — it replies with their ID.
 # e.g. CHAT_IDS = [123456789, 987654321]
-CHAT_IDS = [1088722186]
+CHAT_IDS = [1088722186, 1082703150, 7388953390]
 
 YOUR_INFO = {
     # ── Personal Info ─────────────────────────────────────────
     # Use French/Latin spelling — no Arabic script, the form won't accept it.
     # Note: the key names below (nom, prenom, etc.) must stay in French
     # because they are the actual HTML field names used by Fiat Algeria's forms.
-    "nom":       "VOTRE_NOM",        # Family name in CAPS  (e.g. BENALI)
-    "prenom":    "VotrePrenom",      # First name           (e.g. Mohamed)
-    "email":     "votre@email.com",
-    "telephone": "0555000000",       # Format: 05XXXXXXXX or 06XXXXXXXX or 07XXXXXXXX
+    "nom":       "BOUCETTA",        # Family name in CAPS  (e.g. BENALI)
+    "prenom":    "ZAKARIA",      # First name           (e.g. Mohamed)
+    "email":     "boucetta.zakaria.dz@email.com",
+    "telephone": "0776769776",       # Format: 05XXXXXXXX or 06XXXXXXXX or 07XXXXXXXX
 
     # Wilaya value must match EXACTLY one entry from the 58-wilaya list in README.md
     # Examples: "09 - Blida"  /  "16 - Alger"  /  "31 - Oran"
-    "wilaya":    "09 - Blida",
+    "wilaya":    "07 - Biskra",
 
-    "ville":     "Blida",            # Free text city/town name
+    "ville":     "Biskra",            # Free text city/town name
 
     # ── Client Type ───────────────────────────────────────────
     # "Particulier"    = private individual (most people use this)

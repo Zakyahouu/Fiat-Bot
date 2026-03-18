@@ -22,6 +22,8 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from collections import deque
+from copy import deepcopy
+from urllib.parse import urljoin
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -34,7 +36,7 @@ TELEGRAM_TOKEN = "8711380327:AAEukOapJXvoRFXcdHXJNFI5qyfSICxxw_E"
 # Add every Chat ID that should receive alerts.
 # Each person sends /start to the bot — it replies with their ID.
 # e.g. CHAT_IDS = [123456789, 987654321]
-CHAT_IDS = [1088722186, 1082703150, 7388953390]
+CHAT_IDS = [1088722186, 1082703150, 7388953390, 8613516655]
 
 YOUR_INFO = {
     # ── Personal Info ─────────────────────────────────────────
@@ -92,15 +94,24 @@ CANDIDATE_FORM_URLS = [
     "https://fiatdz.com/panda/",
     "https://fiatdz.com/fiat-panda/",
     "https://fiatdz.com/grande-panda/",
+    "https://fiatdz.com/grandepanda/",
     "https://fiatdz.com/nouvelle-panda/",
+    "https://fiatdz.com/nouveau-panda/",
+    "https://fiatdz.com/nuova-panda/",
     "https://fiatdz.com/new-panda/",
     "https://fiatdz.com/panda-inscription/",
+    "https://fiatdz.com/grande-panda-inscription/",
+    "https://fiatdz.com/inscription-grande-panda/",
     "https://fiatdz.com/inscrivez-vous-panda/",
     "https://fiatdz.com/inscrivez-vous-fiat-panda/",
     "https://fiatdz.com/inscrivez-vous-grande-panda/",
+    "https://fiatdz.com/inscrivez-vous-grandepanda/",
     "https://fiatdz.com/inscription-panda/",
+    "https://fiatdz.com/reservation-grande-panda/",
     "https://fiatdz.com/reservation-panda/",
+    "https://fiatdz.com/precommande-grande-panda/",
     "https://fiatdz.com/precommande-panda/",
+    "https://www.fiat.dz/fr/models/fiat-grande-panda",
     "https://www.fiat.dz/fr/models/panda",
     "https://www.fiat.dz/fr/models/grande-panda",
     "https://www.fiat.dz/fr/modeles/panda",
@@ -114,8 +125,58 @@ PAGES_TO_SCAN = [
 
 PANDA_KEYWORDS = [
     "panda", "grande panda", "nouvelle panda",
-    "new panda", "fiat panda",
+    "new panda", "fiat panda", "grande-panda",
+    "grandepanda", "nuova panda", "nouveau panda",
+    "fiat grande panda",
 ]
+
+INSCRIPTION_LINK_HINTS = [
+    "inscri", "inscription", "inscrivez", "reservation", "precommande", "register",
+]
+
+PROFILE_TEMPLATE = {
+    "nom": "",
+    "prenom": "",
+    "email": "",
+    "telephone": "",
+    "wilaya": "",
+    "ville": "",
+    "type_client": "Particulier",
+    "contact_sms": True,
+    "contact_tel": True,
+    "raison_sociale": "",
+    "nif": "",
+    "registre_commerce": "",
+    "quantite": "",
+    "concessionnaire_preference": "PA FIAT EL DJAZAIR",
+}
+
+PROFILE_FIELDS_HELP = {
+    "nom": "Family name in CAPS (example: BENALI)",
+    "prenom": "First name (example: Zakaria)",
+    "email": "Email address",
+    "telephone": "Phone number (05/06/07...)",
+    "wilaya": "Exact format from list, example: 16 - Alger",
+    "ville": "City name",
+    "type_client": "Particulier or Professionnel",
+    "contact_sms": "yes/no",
+    "contact_tel": "yes/no",
+    "raison_sociale": "Company name (optional for Particulier)",
+    "nif": "Tax ID (optional for Particulier)",
+    "registre_commerce": "Business registration (optional for Particulier)",
+    "quantite": "Requested quantity (optional)",
+    "concessionnaire_preference": "Dealer name (optional)",
+}
+
+REQUIRED_PROFILE_FIELDS = ["nom", "prenom", "email", "telephone", "wilaya", "ville", "type_client"]
+
+
+def default_profile() -> dict:
+    return deepcopy(PROFILE_TEMPLATE)
+
+
+USER_PROFILES = {cid: default_profile() for cid in CHAT_IDS}
+USER_PROFILES[CHAT_IDS[0]] = deepcopy(YOUR_INFO)
 
 # ──────────────────────────────────────────────────────────────
 #   REFERENCE DATA
@@ -213,29 +274,170 @@ async def tg_send(bot: Bot, text: str):
         except Exception as e:
             log.error(f"Telegram send to {cid} failed: {e}")
 
+
+async def tg_send_to(bot: Bot, chat_id: int, text: str):
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+    except Exception as e:
+        log.error(f"Telegram send to {chat_id} failed: {e}")
+
+
+def ensure_user(chat_id: int):
+    if chat_id not in CHAT_IDS:
+        CHAT_IDS.append(chat_id)
+    if chat_id not in USER_PROFILES:
+        USER_PROFILES[chat_id] = default_profile()
+
+
+def normalize_bool(raw: str):
+    value = raw.strip().lower()
+    if value in {"yes", "y", "true", "1", "on", "oui"}:
+        return True
+    if value in {"no", "n", "false", "0", "off", "non"}:
+        return False
+    return None
+
+
+def set_profile_field(profile: dict, field: str, raw_value: str) -> tuple[bool, str]:
+    if field not in PROFILE_FIELDS_HELP:
+        valid = ", ".join(sorted(PROFILE_FIELDS_HELP.keys()))
+        return False, f"Unknown field: {field}.\nValid fields: {valid}"
+
+    value = raw_value.strip()
+
+    if field in {"contact_sms", "contact_tel"}:
+        parsed = normalize_bool(value)
+        if parsed is None:
+            return False, f"Invalid value for {field}. Use yes or no."
+        profile[field] = parsed
+        return True, f"Updated {field} = {parsed}"
+
+    if field == "type_client":
+        value_norm = value.lower()
+        if value_norm not in {"particulier", "professionnel"}:
+            return False, "type_client must be Particulier or Professionnel."
+        profile[field] = "Particulier" if value_norm == "particulier" else "Professionnel"
+        return True, f"Updated {field} = {profile[field]}"
+
+    if field == "wilaya" and value and value not in ALL_WILAYAS:
+        return False, "Invalid wilaya format. Example: 16 - Alger"
+
+    profile[field] = value
+    return True, f"Updated {field}."
+
+
+def profile_missing_fields(profile: dict) -> list[str]:
+    return [k for k in REQUIRED_PROFILE_FIELDS if not str(profile.get(k, "")).strip()]
+
+
+def profile_text(chat_id: int, profile: dict) -> str:
+    lines = [f"<b>Profile for {chat_id}</b>"]
+    for field in PROFILE_FIELDS_HELP:
+        val = profile.get(field, "")
+        if isinstance(val, bool):
+            shown = "yes" if val else "no"
+        else:
+            shown = str(val).strip() or "(blank)"
+        lines.append(f"{field}: <code>{shown}</code>")
+
+    missing = profile_missing_fields(profile)
+    lines.append("")
+    if missing:
+        lines.append("Missing required fields before auto-submit:")
+        lines.append(", ".join(missing))
+    else:
+        lines.append("Required fields are complete.")
+    return "\n".join(lines)
+
 # ──────────────────────────────────────────────────────────────
 #   TELEGRAM COMMANDS
 # ──────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /start — replies with the user's Chat ID.
-    Paste that ID into CHAT_ID above, then redeploy.
+    /start — replies with the user's Chat ID and command help.
     """
     cid   = update.effective_chat.id
+    ensure_user(cid)
     uname = update.effective_user.first_name or "there"
     await update.message.reply_text(
         f"Hey {uname}! The bot is online.\n\n"
         f"Your <b>Chat ID</b> is:\n"
         f"<code>{cid}</code>\n\n"
-        f"Copy that number and paste it into the script:\n"
-        f"<code>CHAT_ID = {cid}</code>\n\n"
-        f"Then redeploy and you're all set.\n\n"
+        f"You are registered for alerts on this bot.\n"
+        f"Use /register to set your profile for auto-submit.\n\n"
         f"Commands:\n"
         f"/check — bot status and uptime\n"
-        f"/panda — last 3 scan reports",
+        f"/panda — last 3 scan reports\n"
+        f"/register — create/reset your profile\n"
+        f"/myprofile — view your profile\n"
+        f"/setfield field value — update one field",
         parse_mode="HTML"
     )
+
+
+async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cid = update.effective_chat.id
+    ensure_user(cid)
+
+    if context.args and context.args[0].strip().lower() == "reset":
+        USER_PROFILES[cid] = default_profile()
+        msg = "Your profile was reset to blank defaults."
+    else:
+        if cid not in USER_PROFILES:
+            USER_PROFILES[cid] = default_profile()
+        msg = "Your profile is ready."
+
+    fields = "\n".join([f"- {k}: {v}" for k, v in PROFILE_FIELDS_HELP.items()])
+    await update.message.reply_text(
+        f"{msg}\n\n"
+        f"Use this command to update fields:\n"
+        f"<code>/setfield field value</code>\n\n"
+        f"Examples:\n"
+        f"<code>/setfield nom BENALI</code>\n"
+        f"<code>/setfield prenom Zakaria</code>\n"
+        f"<code>/setfield email test@email.com</code>\n"
+        f"<code>/setfield wilaya 16 - Alger</code>\n"
+        f"<code>/setfield contact_sms yes</code>\n\n"
+        f"If you don't have a professional field, keep it blank.\n"
+        f"To clear a field: <code>/setfield field -</code>\n\n"
+        f"Available fields:\n{fields}",
+        parse_mode="HTML"
+    )
+
+
+async def cmd_myprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cid = update.effective_chat.id
+    ensure_user(cid)
+    await update.message.reply_text(profile_text(cid, USER_PROFILES[cid]), parse_mode="HTML")
+
+
+async def cmd_setfield(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cid = update.effective_chat.id
+    ensure_user(cid)
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: <code>/setfield field value</code>\n"
+            "Example: <code>/setfield wilaya 16 - Alger</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    field = context.args[0].strip().lower()
+    raw_value = " ".join(context.args[1:]).strip()
+    if raw_value == "-":
+        raw_value = ""
+
+    ok, msg = set_profile_field(USER_PROFILES[cid], field, raw_value)
+    await update.message.reply_text(msg, parse_mode="HTML")
+    if ok:
+        missing = profile_missing_fields(USER_PROFILES[cid])
+        if missing:
+            await update.message.reply_text(
+                "Still missing required fields: " + ", ".join(missing),
+                parse_mode="HTML",
+            )
 
 async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -303,14 +505,13 @@ def extract_cf7_fields(page_html: str):
     return cf7_id, unit_tag, container_post, field_names
 
 
-def build_form_payload(cf7_id, unit_tag, container_post, field_names):
+def build_form_payload(cf7_id, unit_tag, container_post, field_names, info):
     """
     Build the POST payload.
     The field names and dropdown values below are in French because
     they are the actual HTML field names and option values used by
     Fiat Algeria's forms — changing them would break submission.
     """
-    info   = YOUR_INFO
     dealer = info.get("concessionnaire_preference", "") or ALL_DEALERS[-1]
 
     # Contact consent values — must match the form's option text exactly
@@ -381,7 +582,7 @@ def build_form_payload(cf7_id, unit_tag, container_post, field_names):
     return base
 
 
-def try_submit_form(url: str, page_html: str) -> tuple[bool, str]:
+def try_submit_form(url: str, page_html: str, info: dict) -> tuple[bool, str]:
     """
     Submit the form via HTTP POST.
     Tries the CF7 REST API first, then falls back to a direct POST.
@@ -391,7 +592,7 @@ def try_submit_form(url: str, page_html: str) -> tuple[bool, str]:
         cf7_id, unit_tag, container_post, field_names = extract_cf7_fields(page_html)
         log.info(f"CF7 form — ID: {cf7_id} | Fields detected: {field_names}")
 
-        payload = build_form_payload(cf7_id, unit_tag, container_post, field_names)
+        payload = build_form_payload(cf7_id, unit_tag, container_post, field_names, info)
 
         submit_headers = {
             **HEADERS,
@@ -478,18 +679,29 @@ def scan_page_for_panda(url: str) -> tuple[bool, list, str]:
         visible_text   = soup.get_text(" ", strip=True).lower()
         found_keywords = [kw for kw in PANDA_KEYWORDS if kw in visible_text]
 
-        # Only collect links whose actual href URL contains "panda" —
-        # ignores data-* tracking attributes that may mention "panda" for other pages.
-        panda_links = []
-        if found_keywords:
-            for a in soup.find_all("a", href=True):
-                href = a.get("href", "")
-                if "panda" in href.lower():
-                    full = href if href.startswith("http") else "https://www.fiat.dz" + href
-                    panda_links.append(full)
+        # Collect possible target links:
+        # - panda-related model links
+        # - inscription/reservation links, even if page text has no panda word.
+        candidate_links = []
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
+            href_l = href.lower()
 
-        summary = f"Keywords found: {found_keywords}" if found_keywords else "Nothing found"
-        return bool(found_keywords), panda_links, summary
+            has_panda_slug = "panda" in href_l
+            has_inscription_hint = any(h in href_l for h in INSCRIPTION_LINK_HINTS)
+            if has_panda_slug or has_inscription_hint:
+                full = urljoin(url, href)
+                candidate_links.append(full)
+
+        # De-duplicate while preserving order.
+        dedup_links = list(dict.fromkeys(candidate_links))
+
+        found_any = bool(found_keywords) or bool(dedup_links)
+        summary = (
+            f"Keywords found: {found_keywords} | Candidate links: {len(dedup_links)}"
+            if found_any else "Nothing found"
+        )
+        return found_any, dedup_links, summary
 
     except Exception as e:
         return False, [], f"Error: {e}"
@@ -514,28 +726,40 @@ async def on_panda_found(bot: Bot, url: str, page_html: str):
     )
 
     if AUTO_SUBMIT:
-        success, result = try_submit_form(url, page_html)
-        await tg_send(bot,
-            f"<b>Submission {'OK' if success else 'FAILED'}:</b>\n\n"
-            f"{result}\n\n"
-            f"Direct link: {url}\n\n"
-            f"<b>Info used:</b>\n"
-            f"Name:   {YOUR_INFO['prenom']} {YOUR_INFO['nom']}\n"
-            f"Email:  {YOUR_INFO['email']}\n"
-            f"Phone:  {YOUR_INFO['telephone']}\n"
-            f"Wilaya: {YOUR_INFO['wilaya']} — {YOUR_INFO['ville']}"
-        )
-        if not success:
-            await tg_send(bot, f"Auto-submit failed. Register manually RIGHT NOW:\n{url}")
+        for cid in list(dict.fromkeys(CHAT_IDS)):
+            ensure_user(cid)
+            info = USER_PROFILES.get(cid, default_profile())
+            missing = profile_missing_fields(info)
+
+            if missing:
+                await tg_send_to(
+                    bot,
+                    cid,
+                    "<b>Auto-submit skipped for your account.</b>\n"
+                    "Your profile is incomplete. Missing required fields:\n"
+                    f"{', '.join(missing)}\n\n"
+                    "Use /register, then /setfield field value, then /myprofile.",
+                )
+                continue
+
+            success, result = try_submit_form(url, page_html, info)
+            await tg_send_to(bot,
+                cid,
+                f"<b>Submission {'OK' if success else 'FAILED'}:</b>\n\n"
+                f"{result}\n\n"
+                f"Direct link: {url}\n\n"
+                f"<b>Info used:</b>\n"
+                f"Name:   {info['prenom']} {info['nom']}\n"
+                f"Email:  {info['email']}\n"
+                f"Phone:  {info['telephone']}\n"
+                f"Wilaya: {info['wilaya']} — {info['ville']}"
+            )
+            if not success:
+                await tg_send_to(bot, cid, f"Auto-submit failed. Register manually RIGHT NOW:\n{url}")
     else:
         await tg_send(bot,
-            f"<b>Your info ready to paste:</b>\n\n"
-            f"Family name: <code>{YOUR_INFO['nom']}</code>\n"
-            f"First name:  <code>{YOUR_INFO['prenom']}</code>\n"
-            f"Email:       <code>{YOUR_INFO['email']}</code>\n"
-            f"Phone:       <code>{YOUR_INFO['telephone']}</code>\n"
-            f"Wilaya:      <code>{YOUR_INFO['wilaya']}</code>\n"
-            f"City:        <code>{YOUR_INFO['ville']}</code>\n\n"
+            "<b>Alert-only mode is active.</b>\n"
+            "Open the URL and submit manually:\n"
             f"{url}"
         )
 
@@ -571,7 +795,7 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
 
         if found:
             spotted = True
-            report.append(f"⚠️ Panda mentioned on {domain}")
+            report.append(f"Signal detected on {domain}")
             report.append(f"   {summary}")
             if links:
                 report.append(f"   Links: {', '.join(links[:3])}")
@@ -602,14 +826,15 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     if CHAT_IDS:
+        complete = sum(1 for cid in CHAT_IDS if not profile_missing_fields(USER_PROFILES.get(cid, default_profile())))
         await tg_send(
             application.bot,
             f"<b>Bot is online!</b>\n\n"
             f"Checking every <b>{CHECK_INTERVAL_SECONDS}s</b>\n"
             f"Mode: <b>{'Auto-submit ON' if AUTO_SUBMIT else 'Alert only'}</b>\n"
-            f"Registered for: <b>{YOUR_INFO['prenom']} {YOUR_INFO['nom']}</b>\n"
-            f"Wilaya: <b>{YOUR_INFO['wilaya']}</b>\n\n"
-            f"Commands: /check · /panda"
+            f"Tracked chats: <b>{len(CHAT_IDS)}</b>\n"
+            f"Profiles ready for auto-submit: <b>{complete}</b>\n\n"
+            f"Commands: /check · /panda · /register · /myprofile · /setfield"
         )
 
 # ──────────────────────────────────────────────────────────────
@@ -629,6 +854,9 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("check", cmd_check))
     app.add_handler(CommandHandler("panda", cmd_panda))
+    app.add_handler(CommandHandler("register", cmd_register))
+    app.add_handler(CommandHandler("myprofile", cmd_myprofile))
+    app.add_handler(CommandHandler("setfield", cmd_setfield))
 
     app.job_queue.run_repeating(
         monitoring_job,

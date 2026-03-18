@@ -18,6 +18,7 @@ TELEGRAM COMMANDS:
 """
 
 import logging
+import asyncio
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -742,7 +743,7 @@ async def on_panda_found(bot: Bot, url: str, page_html: str):
                 )
                 continue
 
-            success, result = try_submit_form(url, page_html, info)
+            success, result = await asyncio.to_thread(try_submit_form, url, page_html, info)
             await tg_send_to(bot,
                 cid,
                 f"<b>Submission {'OK' if success else 'FAILED'}:</b>\n\n"
@@ -770,55 +771,59 @@ async def on_panda_found(bot: Bot, url: str, page_html: str):
 async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
     global check_count, last_check_ts
 
-    if panda_found:
-        return
-
-    check_count  += 1
-    last_check_ts = datetime.now()
-    ts            = last_check_ts.strftime("%H:%M:%S")
-    report        = [f"Check #{check_count} — {ts}"]
-    spotted       = False
-
-    # Step 1: Probe all candidate inscription URLs directly
-    for url in CANDIDATE_FORM_URLS:
-        is_live, html = check_url_for_form(url)
-        if is_live:
-            report.append(f"LIVE FORM: {url}")
-            scan_reports.append("\n".join(report))
-            await on_panda_found(context.bot, url, html)
+    try:
+        if panda_found:
             return
 
-    # Step 2: Scan main pages for keyword mentions
-    for page_url in PAGES_TO_SCAN:
-        found, links, summary = scan_page_for_panda(page_url)
-        domain = page_url.split("/")[2]
+        check_count  += 1
+        last_check_ts = datetime.now()
+        ts            = last_check_ts.strftime("%H:%M:%S")
+        report        = [f"Check #{check_count} — {ts}"]
+        spotted       = False
 
-        if found:
-            spotted = True
-            report.append(f"Signal detected on {domain}")
-            report.append(f"   {summary}")
-            if links:
-                report.append(f"   Links: {', '.join(links[:3])}")
-                for link in links:
-                    is_live, html = check_url_for_form(link)
-                    if is_live:
-                        scan_reports.append("\n".join(report))
-                        await on_panda_found(context.bot, link, html)
-                        return
+        # Step 1: Probe all candidate inscription URLs directly.
+        # Run blocking requests in worker threads so bot commands stay responsive.
+        for url in CANDIDATE_FORM_URLS:
+            is_live, html = await asyncio.to_thread(check_url_for_form, url)
+            if is_live:
+                report.append(f"LIVE FORM: {url}")
+                scan_reports.append("\n".join(report))
+                await on_panda_found(context.bot, url, html)
+                return
+
+        # Step 2: Scan main pages for keyword mentions
+        for page_url in PAGES_TO_SCAN:
+            found, links, summary = await asyncio.to_thread(scan_page_for_panda, page_url)
+            domain = page_url.split("/")[2]
+
+            if found:
+                spotted = True
+                report.append(f"Signal detected on {domain}")
+                report.append(f"   {summary}")
+                if links:
+                    report.append(f"   Links: {', '.join(links[:3])}")
+                    for link in links:
+                        is_live, html = await asyncio.to_thread(check_url_for_form, link)
+                        if is_live:
+                            scan_reports.append("\n".join(report))
+                            await on_panda_found(context.bot, link, html)
+                            return
+            else:
+                report.append(f"{domain} — nothing found")
+
+        if spotted:
+            report.append("No form yet — but something appeared. Staying alert.")
+            await tg_send(
+                context.bot,
+                "<b>Panda keyword appeared on fiat.dz!</b>\n\n" + "\n".join(report[1:])
+            )
         else:
-            report.append(f"{domain} — nothing found")
+            report.append("All clear.")
 
-    if spotted:
-        report.append("No form yet — but something appeared. Staying alert.")
-        await tg_send(
-            context.bot,
-            "<b>Panda keyword appeared on fiat.dz!</b>\n\n" + "\n".join(report[1:])
-        )
-    else:
-        report.append("All clear.")
-
-    scan_reports.append("\n".join(report))
-    log.info(f"Check #{check_count} done — {'KEYWORD SPOTTED' if spotted else 'nothing'}")
+        scan_reports.append("\n".join(report))
+        log.info(f"Check #{check_count} done — {'KEYWORD SPOTTED' if spotted else 'nothing'}")
+    except Exception as e:
+        log.exception(f"monitoring_job failed: {e}")
 
 # ──────────────────────────────────────────────────────────────
 #   STARTUP

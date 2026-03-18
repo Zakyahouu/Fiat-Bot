@@ -19,6 +19,7 @@ TELEGRAM COMMANDS:
 
 import logging
 import asyncio
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -129,6 +130,11 @@ PANDA_KEYWORDS = [
     "new panda", "fiat panda", "grande-panda",
     "grandepanda", "nuova panda", "nouveau panda",
     "fiat grande panda",
+]
+
+ACTION_KEYWORDS = [
+    "inscri", "inscription", "inscrivez", "reservation", "reserver",
+    "precommande", "précommande", "commander", "register", "book",
 ]
 
 INSCRIPTION_LINK_HINTS = [
@@ -647,28 +653,34 @@ def check_url_for_form(url: str) -> tuple[bool, str | None]:
         r = requests.get(url, headers=HEADERS, timeout=12)
         if r.status_code != 200:
             return False, None
-        text         = r.text.lower()
-        has_form     = "<form" in text
-        has_content  = any(kw in text for kw in [
-            "inscri", "panda", "envoyer ma demande", "contact form", "commander"
-        ])
-        return (True, r.text) if (has_form and has_content) else (False, None)
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+
+        visible_text = soup.get_text(" ", strip=True).lower()
+        final_url = (r.url or url).lower()
+
+        has_form = soup.find("form") is not None
+        has_panda_context = ("panda" in final_url) or any(kw in visible_text for kw in PANDA_KEYWORDS)
+
+        return (True, r.text) if (has_form and has_panda_context) else (False, None)
     except Exception:
         return False, None
 
 
-def scan_page_for_panda(url: str) -> tuple[bool, list, str]:
+def scan_page_for_panda(url: str) -> tuple[list[str], list[str], str]:
     """
     Scan a page for any mention of 'panda' in visible text and extract related links.
     <script>/<style> blocks are stripped first to avoid false positives from static
     JS model lists (e.g. "FIAT PANDA MY 03" in the brands object) and data-* tracking
     attributes (e.g. data-adobe-linktype="content-range:showroom:panda" on other cars).
-    Returns (keyword_found, panda_links, summary_string).
+    Returns (found_keywords, panda_links, summary_string).
     """
     try:
         r = requests.get(url, headers=HEADERS, timeout=12)
         if r.status_code != 200:
-            return False, [], f"HTTP {r.status_code}"
+            return [], [], f"HTTP {r.status_code}"
 
         soup = BeautifulSoup(r.text, "html.parser")
 
@@ -677,35 +689,62 @@ def scan_page_for_panda(url: str) -> tuple[bool, list, str]:
         for tag in soup(["script", "style"]):
             tag.decompose()
 
-        visible_text   = soup.get_text(" ", strip=True).lower()
-        found_keywords = [kw for kw in PANDA_KEYWORDS if kw in visible_text]
+        visible_text = soup.get_text(" ", strip=True).lower()
+        all_text_keywords = [kw for kw in PANDA_KEYWORDS if kw in visible_text]
 
-        # Collect possible target links:
-        # - panda-related model links
-        # - inscription/reservation links, even if page text has no panda word.
+        # Strong signal zones are areas where product launch/registration intent
+        # is usually explicit (titles, headings, CTA links, buttons).
+        strong_zone_text = " ".join(
+            el.get_text(" ", strip=True).lower()
+            for el in soup.find_all(["title", "h1", "h2", "h3", "a", "button"])
+        )
+        strong_zone_keywords = [kw for kw in PANDA_KEYWORDS if kw in strong_zone_text]
+
+        # Accept panda keywords only when context indicates real intent:
+        # - keyword found in strong zones, OR
+        # - panda and registration/action words are close in visible text.
+        context_regex = re.compile(
+            r"(?:panda.{0,120}(?:inscri|reservation|reserver|precommande|précommande|commander|register|book))"
+            r"|(?:(?:inscri|reservation|reserver|precommande|précommande|commander|register|book).{0,120}panda)",
+            re.IGNORECASE,
+        )
+        has_action_context = bool(context_regex.search(visible_text))
+        found_keywords = all_text_keywords if (strong_zone_keywords or has_action_context) else []
+
+        # Collect possible target links.
+        # 1) Anchor href links that are explicitly panda-related.
+        # 2) Raw absolute URLs found in HTML that include panda.
         candidate_links = []
         for a in soup.find_all("a", href=True):
             href = a.get("href", "")
             href_l = href.lower()
+            anchor_text = a.get_text(" ", strip=True).lower()
 
             has_panda_slug = "panda" in href_l
             has_inscription_hint = any(h in href_l for h in INSCRIPTION_LINK_HINTS)
-            if has_panda_slug or has_inscription_hint:
+            anchor_has_panda = "panda" in anchor_text or any(kw in anchor_text for kw in PANDA_KEYWORDS)
+            if has_panda_slug or (has_inscription_hint and anchor_has_panda):
                 full = urljoin(url, href)
                 candidate_links.append(full)
+
+        raw_urls = re.findall(r'https?://[^\s"\'<>]+', r.text, flags=re.IGNORECASE)
+        for raw in raw_urls:
+            cleaned = raw.rstrip(").,;]\"'")
+            if "panda" in cleaned.lower():
+                candidate_links.append(cleaned)
 
         # De-duplicate while preserving order.
         dedup_links = list(dict.fromkeys(candidate_links))
 
-        found_any = bool(found_keywords) or bool(dedup_links)
         summary = (
-            f"Keywords found: {found_keywords} | Candidate links: {len(dedup_links)}"
-            if found_any else "Nothing found"
+            f"Panda words found: {found_keywords} | Strong-zone words: {strong_zone_keywords} | "
+            f"Action context: {'yes' if has_action_context else 'no'} | Panda-related links: {len(dedup_links)}"
+            if found_keywords else "No reliable panda signal in visible text"
         )
-        return found_any, dedup_links, summary
+        return found_keywords, dedup_links, summary
 
     except Exception as e:
-        return False, [], f"Error: {e}"
+        return [], [], f"Error: {e}"
 
 # ──────────────────────────────────────────────────────────────
 #   ON PANDA FOUND
@@ -793,12 +832,13 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
 
         # Step 2: Scan main pages for keyword mentions
         for page_url in PAGES_TO_SCAN:
-            found, links, summary = await asyncio.to_thread(scan_page_for_panda, page_url)
+            found_keywords, links, summary = await asyncio.to_thread(scan_page_for_panda, page_url)
             domain = page_url.split("/")[2]
 
-            if found:
+            if found_keywords:
                 spotted = True
-                report.append(f"Signal detected on {domain}")
+                report.append(f"Panda words detected on {domain}")
+                report.append(f"   Matched words: {', '.join(found_keywords)}")
                 report.append(f"   {summary}")
                 if links:
                     report.append(f"   Links: {', '.join(links[:3])}")
@@ -815,7 +855,7 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
             report.append("No form yet — but something appeared. Staying alert.")
             await tg_send(
                 context.bot,
-                "<b>Panda keyword appeared on fiat.dz!</b>\n\n" + "\n".join(report[1:])
+                f"<b>Panda words detected (check #{check_count})</b>\n\n" + "\n".join(report[1:])
             )
         else:
             report.append("All clear.")

@@ -22,7 +22,7 @@ import asyncio
 import re
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from collections import deque
 from copy import deepcopy
 from urllib.parse import urljoin
@@ -177,6 +177,14 @@ PROFILE_FIELDS_HELP = {
 
 REQUIRED_PROFILE_FIELDS = ["nom", "prenom", "email", "telephone", "wilaya", "ville", "type_client"]
 
+# Algeria uses UTC+1 year-round (no DST), so keep bot timestamps stable
+# even when server timezone is UTC or differs from local time.
+ALGIERS_TZ = timezone(timedelta(hours=1), name="Africa/Algiers")
+
+
+def now_local() -> datetime:
+    return datetime.now(ALGIERS_TZ)
+
 
 def default_profile() -> dict:
     return deepcopy(PROFILE_TEMPLATE)
@@ -245,7 +253,7 @@ ALL_DEALERS = [
 # ──────────────────────────────────────────────────────────────
 
 scan_reports   = deque(maxlen=3)
-bot_start_time = datetime.now()
+bot_start_time = now_local()
 panda_found    = False
 found_url      = None
 check_count    = 0
@@ -450,9 +458,9 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /check — shows bot health: uptime, checks done, last check time, next check ETA.
     """
-    uptime   = str(datetime.now() - bot_start_time).split(".")[0]
+    uptime   = str(now_local() - bot_start_time).split(".")[0]
     last_chk = last_check_ts.strftime("%H:%M:%S") if last_check_ts else "not yet"
-    secs_ago = int((datetime.now() - last_check_ts).total_seconds()) if last_check_ts else 0
+    secs_ago = int((now_local() - last_check_ts).total_seconds()) if last_check_ts else 0
     next_chk = max(0, CHECK_INTERVAL_SECONDS - secs_ago)
 
     status = f"PANDA FOUND!\n{found_url}" if panda_found else "Monitoring active — nothing found yet."
@@ -754,7 +762,7 @@ async def on_panda_found(bot: Bot, url: str, page_html: str):
     global panda_found, found_url
     panda_found = True
     found_url   = url
-    ts = datetime.now().strftime("%H:%M:%S — %d/%m/%Y")
+    ts = now_local().strftime("%H:%M:%S — %d/%m/%Y")
 
     log.info(f"PANDA FOUND at {url}")
 
@@ -815,7 +823,7 @@ async def monitoring_job(context: ContextTypes.DEFAULT_TYPE):
             return
 
         check_count  += 1
-        last_check_ts = datetime.now()
+        last_check_ts = now_local()
         ts            = last_check_ts.strftime("%H:%M:%S")
         report        = [f"Check #{check_count} — {ts}"]
         spotted       = False
